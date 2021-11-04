@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+# group-audit
+#
+# depends on gam https://github.com/jay0lee/GAM
+#
+# This bash script checks a google workspace domain for google groups that have 
+# potentially problematic permissions.  It is obnoxiously easy in Google Groups 
+# to accidentally create groups that are more public than intended.
+#
+# Currently this does three tests.
+# 
+# 1) viewable: finds groups whose VIEW permission is set to something other than
+# group members or group managers.  These groups are considered harmful; it
+# will prompt you to change them (they will be set to be viewable by all group
+# members)
+#
+# 2) joinable: finds groups that can be joined without manager approval or
+# invitation.  Some of these may be intentional. There's not currently an 
+# option to automatically fix these.
+#
+# 3) invitable: finds groups that allow someone other than the group managers
+# to invite users.  Some of these may be intentional.  There's not currently
+# an option to automatically fix these.
+
+tmpfile=$(mktemp -t group-audit.XXXXXXXX)
+fixfile=$(mktemp -t group-audit-fixfile.XXXXXXXX)
+# remove tmpfile when script terminates.
+trap "rm -f $tmpfile" 0 2 3 15
+trap "rm -f $fixfile" 0 2 3 15
+
+$HOME/bin/gam/gam print groups fields email,whoCanViewGroup,whoCanJoin,whoCanInvite | sed '1d' > $tmpfile
+
+viewable=$(egrep -v "(ALL_MEMBERS_CAN_VIEW|ALL_MANAGERS_CAN_VIEW)" $tmpfile | cut -f1 -d,)
+
+if [ -n "$viewable" ]; then
+        echo "Groups that are viewable to people other than group members."
+        echo "$viewable"
+        echo "These groups are considered harmful."
+        echo "$viewable" | sed -e 's/.*$/\$HOME\/bin\/gam\/gam update group & who_can_view_group ALL_MEMBERS_CAN_VIEW/' > $fixfile
+	# you can go look at the /tmp/group-audit-fixfile.whatever to see what will be done
+        read -p "Do you wish to fix them?" -n 1 -r
+        echo 
+        if [[ $REPLY =~ ^[Yy]$ ]]
+        then
+                source $fixfile
+        fi
+else
+        echo "Excellent, no viewables."
+fi
+
+joinable=$(egrep -v "((CAN_REQUEST_TO_JOIN)|(INVITED_CAN_JOIN))" $tmpfile | cut -f1 -d,)
+
+if [ -n "$joinable" ]; then
+        echo "Groups that can be joined without manager approval"
+        echo "$joinable"
+else
+        echo "Excellent, no joinables."
+fi
+
+invitable=$(egrep -v "((ALL_MANAGERS_CAN_INVITE)|(ALL_OWNERS_CAN_INVITE))" $tmpfile | cut -f1 -d,)
+
+if [ -n "$invitable" ]; then
+        echo "Groups where users other than managers can invite"
+        echo "$invitable"
+else
+        echo "Excellent, no invitables."
+fi
